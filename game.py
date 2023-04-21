@@ -47,7 +47,7 @@ class Player(abc.ABC):
 
 class PlayerAI(Player, abc.ABC):
     def choose_edge(self, G: nx.Graph) -> tuple:
-        # TODO: Currently just chooses a random edge, should probably implement some sort of minimax
+        # TODO: Currently just chooses a random edge, need to implement reinforcement learning
         return random.choice([e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED])
 
 

@@ -151,6 +151,8 @@ def random_graph(n: int, p: float):
     g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
     mapping = {node: str(node) for node in g.nodes}
     s, t = random.sample(list(g.nodes), 2)
+    while (s, t) in g.edges:  # ensure the graph cannot be won immediately
+        s, t = random.sample(list(g.nodes), 2)
     mapping[s] = 's'
     mapping[t] = 't'
     nx.relabel_nodes(g, mapping, copy=False)

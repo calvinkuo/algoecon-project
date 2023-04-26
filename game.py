@@ -97,7 +97,7 @@ class PlayerRandomCut(PlayerRandom, PlayerCut):
 
 class PlayerEpsilonGreedy(Player, abc.ABC):
     def __init__(self, num: int):
-        self.Q = defaultdict(lambda: 0)
+        self.Q = defaultdict(lambda: 0.0)
         super().__init__(num)
     def state_tuple(self, G: nx.Graph) -> tuple:
         return (tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED), tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED))
@@ -126,11 +126,10 @@ def train_epsilon_greedy_players(G: nx.Graph, fix: PlayerEpsilonGreedyFix, cut: 
             else:
                 action = max((e for e in G_episode.edges if G_episode.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: player.Q[(q_state_tuple, e)]) # don't call player.choose_edge(G_episode) to prevent regenerating the state tuple
             player.modify_edge(G_episode, GUnsecuredSecured_episode, GSecured_episode, action, printModification=False)
-            reward = int(player.check_win(G_episode, GUnsecuredSecured_episode, GSecured_episode))
-            if reward:
-                player.Q[(q_state_tuple, action)] += alpha * (reward - player.Q[(q_state_tuple, action)])
+            if player.check_win(G_episode, GUnsecuredSecured_episode, GSecured_episode):
+                player.Q[(q_state_tuple, action)] += alpha * (1.0 - player.Q[(q_state_tuple, action)])
                 opp_q_state_tuple = player_opp.state_tuple(G_episode)
-                player_opp.Q[last_q_key] += alpha_opp * (-player_opp.Q[last_q_key])
+                player_opp.Q[last_q_key] += alpha_opp * (-1.0 - player_opp.Q[last_q_key])
                 break
             if not_first_step:
                 opp_q_state_tuple = player_opp.state_tuple(G_episode)

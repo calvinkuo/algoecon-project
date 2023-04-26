@@ -100,7 +100,7 @@ class PlayerEpsilonGreedy(Player, abc.ABC):
         self.Q = defaultdict(lambda: 0.0)
         super().__init__(num)
     def state_tuple(self, G: nx.Graph) -> tuple:
-        return (tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED), tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED))
+        return (tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED)), tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED)))
     def choose_edge(self, G: nx.Graph) -> tuple:
         return max((e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: self.Q[(self.state_tuple(G), e)])
     def choose_random_edge(self, G: nx.Graph) -> tuple:

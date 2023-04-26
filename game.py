@@ -9,6 +9,7 @@ from collections.abc import Callable
 import matplotlib.pyplot as plt
 import networkx as nx
 
+from collections import defaultdict
 
 class EdgeState(enum.Enum):
     UNSECURED = 0
@@ -29,27 +30,25 @@ class Player(abc.ABC):
     def __init__(self, num: int):
         self.num = num
 
-    def take_turn(self, G: nx.Graph):
-        self.modify_edge(G, self.choose_edge(G))
+    def take_turn(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph):
+        self.modify_edge(G, GUnsecuredSecured, GSecured, self.choose_edge(G))
 
     @abc.abstractmethod
     def choose_edge(self, G: nx.Graph) -> tuple:
         raise NotImplementedError
 
     @abc.abstractmethod
-    def modify_edge(self, G: nx.Graph, e: tuple):
+    def modify_edge(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, e: tuple, printModification: bool = True):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def check_win(self, G: nx.Graph) -> bool:
+    def check_win(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph) -> bool:
         raise NotImplementedError
 
 
-class PlayerAI(Player, abc.ABC):
+class PlayerRandom(Player, abc.ABC):
     def choose_edge(self, G: nx.Graph) -> tuple:
-        # TODO: Currently just chooses a random edge, need to implement reinforcement learning
         return random.choice([e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED])
-
 
 class PlayerHuman(Player, abc.ABC):
     def choose_edge(self, G: nx.Graph) -> tuple:
@@ -62,27 +61,23 @@ class PlayerHuman(Player, abc.ABC):
 
 
 class PlayerFix(Player, abc.ABC):
-    def modify_edge(self, G: nx.Graph, e: tuple):
+    def modify_edge(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, e: tuple, printModification: bool = True):
         G.edges[e]["state"] = EdgeState.SECURED
-        print(f"Player {self.num} secured {e}")
+        GSecured.add_edge(*e)
+        if printModification: print(f"Player {self.num} secured {e}")
 
-    def check_win(self, G: nx.Graph) -> bool:
-        # TODO: should be more efficient to do a DFS only on secured edges
-        # Check all paths, return True if at least one is fully secured
-        return any(all(G.edges[e]["state"] is EdgeState.SECURED for e in path)
-                   for path in nx.all_simple_edge_paths(G, 's', 't'))
+    def check_win(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph) -> bool:
+        return nx.has_path(GSecured, 's', 't')
 
 
 class PlayerCut(Player, abc.ABC):
-    def modify_edge(self, G: nx.Graph, e: tuple):
+    def modify_edge(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, e: tuple, printModification: bool = True):
         G.edges[e]["state"] = EdgeState.DELETED
-        print(f"Player {self.num} deleted {e}")
+        GUnsecuredSecured.remove_edge(*e)
+        if printModification: print(f"Player {self.num} deleted {e}")
 
-    def check_win(self, G: nx.Graph) -> bool:
-        # TODO: should be more efficient to do a bidirectional BFS to see if t is reachable from s
-        # Check all paths, return True if all of them are broken
-        return all(any(G.edges[e]["state"] is EdgeState.DELETED for e in path)
-                   for path in nx.all_simple_edge_paths(G, 's', 't'))
+    def check_win(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph) -> bool:
+        return not nx.has_path(GUnsecuredSecured, 's', 't')
 
 
 class PlayerHumanFix(PlayerHuman, PlayerFix):
@@ -93,17 +88,73 @@ class PlayerHumanCut(PlayerHuman, PlayerCut):
     pass
 
 
-class PlayerAIFix(PlayerAI, PlayerFix):
+class PlayerRandomFix(PlayerRandom, PlayerFix):
     pass
 
 
-class PlayerAICut(PlayerAI, PlayerCut):
+class PlayerRandomCut(PlayerRandom, PlayerCut):
     pass
+
+class PlayerEpsilonGreedy(Player, abc.ABC):
+    def __init__(self, num: int):
+        self.Q = defaultdict(lambda: 0)
+        super().__init__(num)
+    def state_tuple(self, G: nx.Graph) -> tuple:
+        return (tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED), tuple(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED))
+    def choose_edge(self, G: nx.Graph) -> tuple:
+        return max((e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: self.Q[(self.state_tuple(G), e)])
+    def choose_random_edge(self, G: nx.Graph) -> tuple:
+        return random.choice([e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED])
+
+class PlayerEpsilonGreedyFix(PlayerEpsilonGreedy, PlayerFix):
+    pass
+
+class PlayerEpsilonGreedyCut(PlayerEpsilonGreedy, PlayerCut):
+    pass
+
+def train_epsilon_greedy_players(G: nx.Graph, fix: PlayerEpsilonGreedyFix, cut: PlayerEpsilonGreedyCut, fixEpsilon: float, cutEpsilon: float, fixAlpha: float, cutAlpha: float, fixGamma: float, cutGamma: float, episodes: int, printEvery: int = 0):
+    GplayableStart, GUnsecuredSecuredStart, GSecuredStart = generate_playable_graphs(G)
+    for e in range(1, episodes + 1):
+        G_episode, GUnsecuredSecured_episode, GSecured_episode = GplayableStart.copy(), GUnsecuredSecuredStart.copy(), GSecuredStart.copy()
+        not_first_step = False
+        player, epsilon, alpha, gamma, player_opp, epsilon_opp, alpha_opp, gamma_opp = fix, fixEpsilon, fixAlpha, fixGamma, cut, cutEpsilon, cutAlpha, cutGamma
+        last_q_key = None
+        while True:
+            q_state_tuple = player.state_tuple(G_episode)
+            if random.random() < epsilon:
+                action = player.choose_random_edge(G_episode)
+            else:
+                action = max((e for e in G_episode.edges if G_episode.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: player.Q[(q_state_tuple, e)]) # don't call player.choose_edge(G_episode) to prevent regenerating the state tuple
+            player.modify_edge(G_episode, GUnsecuredSecured_episode, GSecured_episode, action, printModification=False)
+            reward = int(player.check_win(G_episode, GUnsecuredSecured_episode, GSecured_episode))
+            if reward:
+                player.Q[(q_state_tuple, action)] += alpha * (reward - player.Q[(q_state_tuple, action)])
+                opp_q_state_tuple = player_opp.state_tuple(G_episode)
+                player_opp.Q[last_q_key] += alpha_opp * (-player_opp.Q[last_q_key])
+                break
+            if not_first_step:
+                opp_q_state_tuple = player_opp.state_tuple(G_episode)
+                player_opp.Q[last_q_key] += alpha_opp * (gamma_opp * max(player_opp.Q[(opp_q_state_tuple, e)] for e in G_episode.edges if G_episode.edges[e]["state"] is EdgeState.UNSECURED) - player_opp.Q[last_q_key])
+            last_q_key = (q_state_tuple, action)
+            player, epsilon, alpha, gamma, player_opp, epsilon_opp, alpha_opp, gamma_opp = player_opp, epsilon_opp, alpha_opp, gamma_opp, player, epsilon, alpha, gamma
+            not_first_step = True
+        if printEvery and (e % printEvery == 0):
+            print(f"Training episode {e} done")
 # endregion
 
 
 def read_graph_from_file(path: str):
-    return nx.read_adjlist(path)
+    g = nx.read_adjlist(path)
+    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
+    return g
+
+
+def generate_playable_graphs(G: nx.Graph):
+    gSecured = nx.Graph()
+    gSecured.add_nodes_from(G.nodes())
+    gUnsecuredSecured = gSecured.copy()
+    gUnsecuredSecured.add_edges_from(G.edges())
+    return G.copy(), gUnsecuredSecured, gSecured
 
 
 def display_graph(G: nx.Graph, pos: dict, stale: threading.Event):
@@ -116,42 +167,50 @@ def display_graph(G: nx.Graph, pos: dict, stale: threading.Event):
     plt.pause(0.01)
 
 
-def start_game(G: nx.graph, fix: PlayerFix, cut: PlayerCut, stale: threading.Event):
+def start_game(G: nx.graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, fix: PlayerFix, cut: PlayerCut, stale: threading.Event):
     while True:
-        fix.take_turn(G)
+        fix.take_turn(G, GUnsecuredSecured, GSecured)
         stale.set()
-        if fix.check_win(G):
+        if fix.check_win(G, GUnsecuredSecured, GSecured):
             print(f"Player {fix.num} wins!")
             return fix.num
 
-        cut.take_turn(G)
+        cut.take_turn(G, GUnsecuredSecured, GSecured)
         stale.set()
-        if cut.check_win(G):
+        if cut.check_win(G, GUnsecuredSecured, GSecured):
             print(f"Player {cut.num} wins!")
             return cut.num
 
 
-def play_game(G: nx.Graph, fix: Callable[[int], PlayerFix], cut: Callable[[int], PlayerCut]):
-    nx.set_edge_attributes(G, EdgeState.UNSECURED, "state")
-    pos = nx.spring_layout(G)
+def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
+    Gplayable, GUnsecuredSecured, GSecured = generate_playable_graphs(G)
+    pos = nx.spring_layout(Gplayable)
     stale = threading.Event()
     stale.set()
-    display_graph(G, pos, stale)
-    thread = threading.Thread(target=start_game, args=(G, fix(1), cut(2), stale))
+    display_graph(Gplayable, pos, stale)
+    thread = threading.Thread(target=start_game, args=(Gplayable, GUnsecuredSecured, GSecured, fix, cut, stale))
     thread.start()
     while True:
-        display_graph(G, pos, stale)
+        display_graph(Gplayable, pos, stale)
         if not thread.is_alive():
             break
-    display_graph(G, pos, stale)
+    display_graph(Gplayable, pos, stale)
     plt.show()
 
 
 def main():
-    play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix, PlayerAICut)
-    # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix, PlayerHumanCut)
-    # play_game(read_graph_from_file("graphs/complete_graph_10.adjlist"), PlayerAIFix, PlayerHumanCut)
+    # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix(1), PlayerRandomCut(2))
+    # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix(1), PlayerHumanCut(2))
+    # play_game(read_graph_from_file("graphs/complete_graph_10.adjlist"), PlayerRandomFix(1), PlayerHumanCut(2))
 
+    epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+    epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+    graph = read_graph_from_file("graphs/graph.adjlist")
+    # graph = read_graph_from_file("graphs/complete_graph_10.adjlist")
+    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000, printEvery=1_000)
+    while True:
+        play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
+        # play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
 
 if __name__ == "__main__":
     main()

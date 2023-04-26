@@ -149,6 +149,20 @@ def read_graph_from_file(path: str):
     return g
 
 
+def random_graph(n: int, p: float):
+    g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
+    mapping = {node: str(node) for node in g.nodes}
+    s, t = random.sample(list(g.nodes), 2)
+    mapping[s] = 's'
+    mapping[t] = 't'
+    nx.relabel_nodes(g, mapping, copy=False)
+    if not nx.has_path(g, 's', 't'):
+        return random_graph(n, p)
+    nx.write_adjlist(g, 'graphs/last_random_graph.adjlist')
+    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
+    return g
+
+
 def generate_playable_graphs(G: nx.Graph):
     gSecured = nx.Graph()
     gSecured.add_nodes_from(G.nodes())
@@ -190,10 +204,8 @@ def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
     display_graph(Gplayable, pos, stale)
     thread = threading.Thread(target=start_game, args=(Gplayable, GUnsecuredSecured, GSecured, fix, cut, stale))
     thread.start()
-    while True:
+    while thread.is_alive():
         display_graph(Gplayable, pos, stale)
-        if not thread.is_alive():
-            break
     display_graph(Gplayable, pos, stale)
     plt.show()
 
@@ -205,12 +217,14 @@ def main():
 
     epsilon_player_fix = PlayerEpsilonGreedyFix(1)
     epsilon_player_cut = PlayerEpsilonGreedyCut(2)
-    graph = read_graph_from_file("graphs/graph.adjlist")
     # graph = read_graph_from_file("graphs/complete_graph_10.adjlist")
-    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000, printEvery=1_000)
+    graph = random_graph(random.randint(8, 14), random.uniform(0.2, 0.4))
+    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
+                                 printEvery=1_000)
     while True:
         play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
-        # play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+        play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+
 
 if __name__ == "__main__":
     main()

@@ -128,7 +128,6 @@ def train_epsilon_greedy_players(G: nx.Graph, fix: PlayerEpsilonGreedyFix, cut: 
             player.modify_edge(G_episode, GUnsecuredSecured_episode, GSecured_episode, action, printModification=False)
             if player.check_win(G_episode, GUnsecuredSecured_episode, GSecured_episode):
                 player.Q[(q_state_tuple, action)] += alpha * (1.0 - player.Q[(q_state_tuple, action)])
-                opp_q_state_tuple = player_opp.state_tuple(G_episode)
                 player_opp.Q[last_q_key] += alpha_opp * (-1.0 - player_opp.Q[last_q_key])
                 break
             if not_first_step:

@@ -149,15 +149,15 @@ def read_graph_from_file(path: str):
 
 def random_graph(n: int, p: float):
     g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
-    mapping = {node: str(node) for node in g.nodes}
     s, t = random.sample(list(g.nodes), 2)
-    while (s, t) in g.edges:  # ensure the graph cannot be won immediately
-        s, t = random.sample(list(g.nodes), 2)
+    if (s, t) in g.edges:  # ensure the graph cannot be won immediately
+        g.remove_edge(s, t)
+    if not nx.has_path(g, 's', 't'):  # ensure the graph is still winnable
+        return random_graph(n, p)
+    mapping = {node: str(node) for node in g.nodes}
     mapping[s] = 's'
     mapping[t] = 't'
     nx.relabel_nodes(g, mapping, copy=False)
-    if not nx.has_path(g, 's', 't'):
-        return random_graph(n, p)
     nx.write_adjlist(g, 'graphs/last_random_graph.adjlist')
     nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
     return g

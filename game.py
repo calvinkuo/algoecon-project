@@ -152,7 +152,7 @@ def random_graph(n: int, p: float):
     s, t = random.sample(list(g.nodes), 2)
     if (s, t) in g.edges:  # ensure the graph cannot be won immediately
         g.remove_edge(s, t)
-    if not nx.has_path(g, 's', 't'):  # ensure the graph is still winnable
+    if not nx.has_path(g, s, t):  # ensure the graph is still winnable
         return random_graph(n, p)
     mapping = {node: str(node) for node in g.nodes}
     mapping[s] = 's'

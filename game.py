@@ -10,6 +10,7 @@ import networkx as nx
 import numpy as np
 
 from collections import defaultdict
+from collections.abc import Container
 
 plt.rcParams['savefig.dpi'] = 1_200
 closed = threading.Event()
@@ -344,6 +345,14 @@ def simple_demo():
         play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
 
 
+def input_validate(prompt: str, valid: Container[str]) -> str:
+    option = input(prompt).strip()
+    while option not in valid:
+        print('Not a valid option, please try again.')
+        option = input(prompt).strip()
+    return option
+
+
 def main():
     import glob
     import os.path
@@ -362,7 +371,8 @@ def main():
                         description = f.readline()
                     description = description.removeprefix('#').strip() if description.startswith('#') else ''
                 print(f'- {i}:  {os.path.splitext(os.path.basename(filename))[0]: <{max_len}}  {description}')
-            option = input('Enter a number, or leave it blank to play on a random graph (Ctrl-D to exit): ').strip()
+            option = input_validate('Enter a number, or leave it blank to play on a random graph: ',
+                                    [str(i) for i in range(1, len(graph_names) + 1)] + [''])
             if option:
                 graph = read_graph_from_file(graph_names[int(option) - 1])
             else:
@@ -371,11 +381,7 @@ def main():
 
             while True:
                 print('Please select an option:\n- 1: AI vs. AI\n- 2: Human vs. AI\n- 3: Human vs. Human')
-                option = input('Enter a number: ').strip()
-                while option not in ('1', '2', '3'):
-                    print('Not a valid option, please try again.')
-                    option = input('Enter a number: ').strip()
-
+                option = input_validate('Enter a number: ', ('1', '2', '3'))
                 if option == '1':
                     if not epsilon_player_fix or not epsilon_player_cut:
                         epsilon_player_fix = PlayerEpsilonGreedyFix(1)
@@ -388,10 +394,7 @@ def main():
                     print('Please select an option:\n'
                           '- 1: You play as Player 1 (fix-type)\n'
                           '- 2: You play as Player 2 (cut-type)')
-                    option = input('Enter a number: ').strip()
-                    while option not in ('1', '2'):
-                        print('Not a valid option, please try again.')
-                        option = input('Enter a number: ').strip()
+                    option = input_validate('Enter a number: ', ('1', '2'))
                     if not epsilon_player_fix or not epsilon_player_cut:
                         epsilon_player_fix = PlayerEpsilonGreedyFix(1)
                         epsilon_player_cut = PlayerEpsilonGreedyCut(2)
@@ -400,15 +403,12 @@ def main():
                                                      printEvery=1_000)
                     if option == '1':
                         play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
-                    else:
+                    elif option == '2':
                         play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
                 elif option == '3':
                     play_game(graph, PlayerHumanFix(1), PlayerHumanCut(2))
 
-                option = input('Play on this graph again? (y/n) ').strip()
-                while option not in ('y', 'n'):
-                    print('Not a valid option, please try again.')
-                    option = input('Play on this graph again? (y/n) ').strip()
+                option = input_validate('Play on this graph again? (y/n) ', ('y', 'n'))
                 print('----------------------------------------------------------------')
                 if option == 'n':
                     break

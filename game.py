@@ -37,12 +37,13 @@ def read_graph_from_file(path: str):
 
 
 def random_graph(n: int, p: float):
-    g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
+    g: nx.Graph = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
     s, t = random.sample(list(g.nodes), 2)
     if (s, t) in g.edges:  # ensure the graph cannot be won immediately
         g.remove_edge(s, t)
     if not nx.has_path(g, s, t):  # ensure the graph is still winnable
         return random_graph(n, p)
+    g.remove_nodes_from([n for n in g.nodes if not g[n]])  # remove nodes with no neighbors
     mapping = {node: str(node) for node in g.nodes}
     mapping[s] = 's'
     mapping[t] = 't'

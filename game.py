@@ -210,22 +210,25 @@ def display_graph(G: nx.Graph, pos: dict, stale: threading.Event):
 
 
 def start_game(G: nx.graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, fix: PlayerFix, cut: PlayerCut, stale: threading.Event, closed: threading.Event):
-    while True:
-        fix.take_turn(G, GUnsecuredSecured, GSecured)
-        stale.set()
-        if closed.is_set():
-            break
-        if fix.check_win(G, GUnsecuredSecured, GSecured):
-            print(f"Player {fix.num} wins!")
-            return fix.num
+    try:
+        while True:
+            fix.take_turn(G, GUnsecuredSecured, GSecured)
+            stale.set()
+            if closed.is_set():
+                break
+            if fix.check_win(G, GUnsecuredSecured, GSecured):
+                print(f"Player {fix.num} wins!")
+                return fix.num
 
-        cut.take_turn(G, GUnsecuredSecured, GSecured)
-        stale.set()
-        if closed.is_set():
-            break
-        if cut.check_win(G, GUnsecuredSecured, GSecured):
-            print(f"Player {cut.num} wins!")
-            return cut.num
+            cut.take_turn(G, GUnsecuredSecured, GSecured)
+            stale.set()
+            if closed.is_set():
+                break
+            if cut.check_win(G, GUnsecuredSecured, GSecured):
+                print(f"Player {cut.num} wins!")
+                return cut.num
+    except EOFError:
+        pass
 
 
 def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
@@ -242,6 +245,7 @@ def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
         display_graph(Gplayable, pos, stale)
     display_graph(Gplayable, pos, stale)
     if not closed.is_set():
+        print('Close the window to continue...')
         plt.show()
 # endregion
 
@@ -340,54 +344,75 @@ def simple_demo():
 
 
 def main():
-    filename = input('Please enter the name of a graph or hit Enter to play on a random graph: ').strip()
-    if filename:
-        graph = read_graph_from_file(f"graphs/{filename}.adjlist")
-    else:
-        graph = random_graph(random.randint(8, 14), random.uniform(0.2, 0.4))
-    epsilon_player_fix = epsilon_player_cut = None
+    import glob
+    import os.path
 
-    while True:
-        print("Please select an option:\n- 1: AI vs. AI\n- 2: Human vs. AI\n- 3: Human vs. Human")
-        option = input('Enter a number: ').strip()
-        while option not in ('1', '2', '3'):
-            print('Not a valid option, please try again.')
-            option = input('Enter a number: ').strip()
-
-        if option == '1':
-            if not epsilon_player_fix or not epsilon_player_cut:
-                epsilon_player_fix = PlayerEpsilonGreedyFix(1)
-                epsilon_player_cut = PlayerEpsilonGreedyCut(2)
-                print('Training the AI...')
-                train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
-                                             printEvery=1_000)
-            play_game(graph, epsilon_player_fix, epsilon_player_cut)
-        elif option == '2':
-            print("Please select an option:\n- 1: You play as Player 1 (fix-type)\n- 2: You play as Player 2 (cut-type)")
-            option = input('Enter a number: ').strip()
-            while option not in ('1', '2'):
-                print('Not a valid option, please try again.')
-                option = input('Enter a number: ').strip()
-            if not epsilon_player_fix or not epsilon_player_cut:
-                epsilon_player_fix = PlayerEpsilonGreedyFix(1)
-                epsilon_player_cut = PlayerEpsilonGreedyCut(2)
-                print('Training the AI...')
-                train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
-                                             printEvery=1_000)
-            if option == '1':
-                play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+    try:
+        while True:
+            print('Please select a graph: ')
+            graph_names = glob.glob('graphs/*.adjlist')
+            short_names = [os.path.splitext(os.path.basename(filename))[0] for filename in graph_names]
+            max_len = max(len(filename) for filename in short_names)
+            for i, filename in enumerate(graph_names, 1):
+                if 'last_random_graph' in filename:
+                    description = 'The last randomly generated graph'
+                else:
+                    with open(filename, 'r', encoding='utf-8') as f:
+                        description = f.readline()
+                    description = description.removeprefix('#').strip() if description.startswith('#') else ''
+                print(f'- {i}:  {os.path.splitext(os.path.basename(filename))[0]: <{max_len}}  {description}')
+            option = input('Enter a number, or leave it blank to play on a random graph (Ctrl-D to exit): ').strip()
+            if option:
+                graph = read_graph_from_file(graph_names[int(option) - 1])
             else:
-                play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
-        elif option == '3':
-            play_game(graph, PlayerHumanFix(1), PlayerHumanCut(2))
+                graph = random_graph(random.randint(8, 14), random.uniform(0.2, 0.4))
+            epsilon_player_fix = epsilon_player_cut = None
 
-        option = input('Play again? (y/n) ').strip()
-        while option not in ('y', 'n'):
-            print('Not a valid option, please try again.')
-            option = input('Play again? (y/n) ').strip()
-        if option == 'n':
-            print('Thanks for playing!')
-            break
+            while True:
+                print('Please select an option:\n- 1: AI vs. AI\n- 2: Human vs. AI\n- 3: Human vs. Human')
+                option = input('Enter a number: ').strip()
+                while option not in ('1', '2', '3'):
+                    print('Not a valid option, please try again.')
+                    option = input('Enter a number: ').strip()
+
+                if option == '1':
+                    if not epsilon_player_fix or not epsilon_player_cut:
+                        epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+                        epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+                        print('Training the AI...')
+                        train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
+                                                     printEvery=1_000)
+                    play_game(graph, epsilon_player_fix, epsilon_player_cut)
+                elif option == '2':
+                    print('Please select an option:\n'
+                          '- 1: You play as Player 1 (fix-type)\n'
+                          '- 2: You play as Player 2 (cut-type)')
+                    option = input('Enter a number: ').strip()
+                    while option not in ('1', '2'):
+                        print('Not a valid option, please try again.')
+                        option = input('Enter a number: ').strip()
+                    if not epsilon_player_fix or not epsilon_player_cut:
+                        epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+                        epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+                        print('Training the AI...')
+                        train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
+                                                     printEvery=1_000)
+                    if option == '1':
+                        play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+                    else:
+                        play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
+                elif option == '3':
+                    play_game(graph, PlayerHumanFix(1), PlayerHumanCut(2))
+
+                option = input('Play on this graph again? (y/n) ').strip()
+                while option not in ('y', 'n'):
+                    print('Not a valid option, please try again.')
+                    option = input('Play on this graph again? (y/n) ').strip()
+                print('----------------------------------------------------------------')
+                if option == 'n':
+                    break
+    except EOFError:
+        pass
 
 
 if __name__ == "__main__":

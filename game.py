@@ -11,6 +11,10 @@ import networkx as nx
 
 from collections import defaultdict
 
+import numpy as np
+
+plt.rcParams['savefig.dpi'] = 1_200
+
 class EdgeState(enum.Enum):
     UNSECURED = 0
     SECURED = 1
@@ -30,8 +34,8 @@ class Player(abc.ABC):
     def __init__(self, num: int):
         self.num = num
 
-    def take_turn(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph):
-        self.modify_edge(G, GUnsecuredSecured, GSecured, self.choose_edge(G))
+    def take_turn(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, printModification: bool = True):
+        self.modify_edge(G, GUnsecuredSecured, GSecured, self.choose_edge(G), printModification=printModification)
 
     @abc.abstractmethod
     def choose_edge(self, G: nx.Graph) -> tuple:
@@ -100,7 +104,7 @@ class PlayerEpsilonGreedy(Player, abc.ABC):
         self.Q = defaultdict(lambda: 0.0)
         super().__init__(num)
     def state_tuple(self, G: nx.Graph) -> tuple:
-        return (tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED)), tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED)))
+        return (tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED)), tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED))) # Note: shouldn't need to sort I think bc networkx stores edges in a dict which Python 3.7 is guarenteed insertion order... but no need to optimize that aggressively
     def choose_edge(self, G: nx.Graph) -> tuple:
         return max((e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: self.Q[(self.state_tuple(G), e)])
     def choose_random_edge(self, G: nx.Graph) -> tuple:
@@ -209,6 +213,92 @@ def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
     display_graph(Gplayable, pos, stale)
     plt.show()
 
+def simple_demo():
+    epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+    epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+    graph = read_graph_from_file("graphs/graph.adjlist")
+    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.5, 0.5, 0.9, 0.9, 1_000, printEvery=100)
+    while True:
+        play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
+        play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+
+def play_game_no_display_return_winner(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
+    Gplayable, GUnsecuredSecured, GSecured = generate_playable_graphs(G)
+    while True:
+        fix.take_turn(Gplayable, GUnsecuredSecured, GSecured, printModification= False)
+        if fix.check_win(Gplayable, GUnsecuredSecured, GSecured):
+            return fix.num
+        cut.take_turn(Gplayable, GUnsecuredSecured, GSecured, printModification= False)
+        if cut.check_win(Gplayable, GUnsecuredSecured, GSecured):
+            return cut.num
+
+def win_rate_fix_should_win_graph_plot():
+    trials = 10
+    rounds = 35
+    iter_per_round = 500
+    iter_per_eval = 500
+    random_player_cut = PlayerRandomCut(5)
+    graph = read_graph_from_file("graphs/fix_should_win_graph.adjlist")
+    win_rates_train_random = np.zeros((trials, rounds))
+    win_rates_train_greedy = np.zeros((trials, rounds))
+    for t in range(trials):
+        epsilon_player_fix_train_random = PlayerEpsilonGreedyFix(1)
+        epsilon_player_fix_train_greedy = PlayerEpsilonGreedyFix(2)
+        epsilon_player_cut_train_random = PlayerEpsilonGreedyCut(3)
+        epsilon_player_cut_train_greedy = PlayerEpsilonGreedyCut(4)
+        for r in range(rounds):
+            train_epsilon_greedy_players(graph, epsilon_player_fix_train_greedy, epsilon_player_cut_train_greedy, 0.2, 0.2, 0.5, 0.5, 0.8, 0.8, iter_per_round)
+            win_rates_train_greedy[t, r] = sum((1 if play_game_no_display_return_winner(graph, epsilon_player_fix_train_greedy, random_player_cut) == epsilon_player_fix_train_greedy.num else 0 for i in range(iter_per_eval))) / iter_per_eval
+            print(f'\tTrain vs greedy win-rate {win_rates_train_greedy[t, r]}')
+            train_epsilon_greedy_players(graph, epsilon_player_fix_train_random, epsilon_player_cut_train_random, 0.2, 1.0, 0.5, 0.5, 0.8, 0.8, iter_per_round)
+            win_rates_train_random[t, r] = sum((1 if play_game_no_display_return_winner(graph, epsilon_player_fix_train_random, random_player_cut) == epsilon_player_fix_train_random.num else 0 for i in range(iter_per_eval))) / iter_per_eval
+            print(f'\tTrain vs random win-rate {win_rates_train_random[t, r]}')
+            print(f'Trial {t+1} round {r+1} done...')
+    avg_win_rate_train_greedy = np.mean(win_rates_train_greedy, axis=0)
+    avg_win_rate_train_random = np.mean(win_rates_train_random, axis=0)
+    plot_iters = [iter_per_round * r for r in range(1, rounds + 1)]
+    plt.plot(plot_iters, avg_win_rate_train_greedy, label="Trained vs Epsilon-Greedy Cut")
+    plt.plot(plot_iters, avg_win_rate_train_random, label="Trained vs Random Cut")
+    plt.suptitle("Epsilon-Greedy Fix Win-Rate Against Random Cut vs Training Iterations")
+    plt.title("On Graph Where Fix Can Win With Perfect Play", fontsize=8)
+    plt.ylabel('Win-Rate Against Random Cut')
+    plt.xlabel('Training Iterations')
+    plt.legend(loc="lower right")
+    plt.show()
+
+def win_rate_cut_should_win_graph_plot():
+    trials = 10
+    rounds = 50
+    iter_per_round = 500
+    iter_per_eval = 500
+    random_player_fix = PlayerRandomFix(5)
+    graph = read_graph_from_file("graphs/cut_should_win_graph.adjlist")
+    win_rates_train_random = np.zeros((trials, rounds))
+    win_rates_train_greedy = np.zeros((trials, rounds))
+    for t in range(trials):
+        epsilon_player_fix_train_random = PlayerEpsilonGreedyFix(1)
+        epsilon_player_fix_train_greedy = PlayerEpsilonGreedyFix(2)
+        epsilon_player_cut_train_random = PlayerEpsilonGreedyCut(3)
+        epsilon_player_cut_train_greedy = PlayerEpsilonGreedyCut(4)
+        for r in range(rounds):
+            train_epsilon_greedy_players(graph, epsilon_player_fix_train_greedy, epsilon_player_cut_train_greedy, 0.2, 0.2, 0.5, 0.5, 0.8, 0.8, iter_per_round)
+            win_rates_train_greedy[t, r] = sum((1 if play_game_no_display_return_winner(graph, random_player_fix, epsilon_player_cut_train_greedy) == epsilon_player_cut_train_greedy.num else 0 for i in range(iter_per_eval))) / iter_per_eval
+            print(f'\tTrain vs greedy win-rate {win_rates_train_greedy[t, r]}')
+            train_epsilon_greedy_players(graph, epsilon_player_fix_train_random, epsilon_player_cut_train_random, 1.0, 0.2, 0.5, 0.5, 0.8, 0.8, iter_per_round)
+            win_rates_train_random[t, r] = sum((1 if play_game_no_display_return_winner(graph, random_player_fix, epsilon_player_cut_train_random) == epsilon_player_cut_train_random.num else 0 for i in range(iter_per_eval))) / iter_per_eval
+            print(f'\tTrain vs random win-rate {win_rates_train_random[t, r]}')
+            print(f'Trial {t+1} round {r+1} done...')
+    avg_win_rate_train_greedy = np.mean(win_rates_train_greedy, axis=0)
+    avg_win_rate_train_random = np.mean(win_rates_train_random, axis=0)
+    plot_iters = [iter_per_round * r for r in range(1, rounds + 1)]
+    plt.plot(plot_iters, avg_win_rate_train_greedy, label="Trained vs Epsilon-Greedy Fix")
+    plt.plot(plot_iters, avg_win_rate_train_random, label="Trained vs Random Fix")
+    plt.suptitle("Epsilon-Greedy Cut Win-Rate Against Random Fix vs Training Iterations")
+    plt.title("On Graph Where Cut Can Win With Perfect Play", fontsize=8)
+    plt.ylabel('Win-Rate Against Random Fix')
+    plt.xlabel('Training Iterations')
+    plt.legend(loc="lower right")
+    plt.show()
 
 def main():
     # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix(1), PlayerRandomCut(2))

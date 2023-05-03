@@ -4,17 +4,18 @@ import abc
 import enum
 import random
 import threading
-from collections.abc import Callable
 
 import matplotlib.pyplot as plt
 import networkx as nx
+import numpy as np
 
 from collections import defaultdict
 
-import numpy as np
-
 plt.rcParams['savefig.dpi'] = 1_200
+closed = threading.Event()
 
+
+# region Read/generate graphs
 class EdgeState(enum.Enum):
     UNSECURED = 0
     SECURED = 1
@@ -29,13 +30,47 @@ class EdgeState(enum.Enum):
         return 'k'
 
 
+def read_graph_from_file(path: str):
+    g = nx.read_adjlist(path)
+    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
+    return g
+
+
+def random_graph(n: int, p: float):
+    g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
+    s, t = random.sample(list(g.nodes), 2)
+    if (s, t) in g.edges:  # ensure the graph cannot be won immediately
+        g.remove_edge(s, t)
+    if not nx.has_path(g, s, t):  # ensure the graph is still winnable
+        return random_graph(n, p)
+    mapping = {node: str(node) for node in g.nodes}
+    mapping[s] = 's'
+    mapping[t] = 't'
+    nx.relabel_nodes(g, mapping, copy=False)
+    nx.write_adjlist(g, 'graphs/last_random_graph.adjlist')
+    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
+    return g
+
+
+def generate_playable_graphs(G: nx.Graph):
+    gSecured = nx.Graph()
+    gSecured.add_nodes_from(G.nodes())
+    gUnsecuredSecured = gSecured.copy()
+    gUnsecuredSecured.add_edges_from(G.edges())
+    return G.copy(), gUnsecuredSecured, gSecured
+# endregion
+
+
 # region Player code
 class Player(abc.ABC):
     def __init__(self, num: int):
         self.num = num
 
     def take_turn(self, G: nx.Graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, printModification: bool = True):
-        self.modify_edge(G, GUnsecuredSecured, GSecured, self.choose_edge(G), printModification=printModification)
+        chosen_edge = self.choose_edge(G)
+        if closed.is_set():
+            return
+        self.modify_edge(G, GUnsecuredSecured, GSecured, chosen_edge, printModification=printModification)
 
     @abc.abstractmethod
     def choose_edge(self, G: nx.Graph) -> tuple:
@@ -54,11 +89,18 @@ class PlayerRandom(Player, abc.ABC):
     def choose_edge(self, G: nx.Graph) -> tuple:
         return random.choice([e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED])
 
+
 class PlayerHuman(Player, abc.ABC):
     def choose_edge(self, G: nx.Graph) -> tuple:
         print(f"Player {self.num}'s turn. Choose an edge.")
         while True:
-            e = (input('- Vertex 1: '), input('- Vertex 2: '))
+            v1 = input('- Vertex 1: ')
+            if closed.is_set():
+                break
+            v2 = input('- Vertex 2: ')
+            if closed.is_set():
+                break
+            e = (v1, v2)
             if e in G.edges and G.edges[e]["state"] is EdgeState.UNSECURED:
                 return e
             print('Not a valid edge, please try again.')
@@ -99,22 +141,32 @@ class PlayerRandomFix(PlayerRandom, PlayerFix):
 class PlayerRandomCut(PlayerRandom, PlayerCut):
     pass
 
+
 class PlayerEpsilonGreedy(Player, abc.ABC):
     def __init__(self, num: int):
         self.Q = defaultdict(lambda: 0.0)
         super().__init__(num)
+
     def state_tuple(self, G: nx.Graph) -> tuple:
-        return (tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED)), tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED))) # Note: shouldn't need to sort I think bc networkx stores edges in a dict which Python 3.7 is guarenteed insertion order... but no need to optimize that aggressively
+        return (tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.SECURED)),
+                tuple(sorted(e for e in G.edges if G.edges[e]["state"] is EdgeState.DELETED)))
+        # Note: shouldn't need to sort I think bc networkx stores edges in a dict which Python 3.7 is guaranteed insertion order... but no need to optimize that aggressively
+        # Was finding that the Q dicts had duplicate states with the same edges in different order when I was testing, probably something to do with how edges are iterated over
+
     def choose_edge(self, G: nx.Graph) -> tuple:
         return max((e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED), key= lambda e: self.Q[(self.state_tuple(G), e)])
+
     def choose_random_edge(self, G: nx.Graph) -> tuple:
         return random.choice([e for e in G.edges if G.edges[e]["state"] is EdgeState.UNSECURED])
+
 
 class PlayerEpsilonGreedyFix(PlayerEpsilonGreedy, PlayerFix):
     pass
 
+
 class PlayerEpsilonGreedyCut(PlayerEpsilonGreedy, PlayerCut):
     pass
+
 
 def train_epsilon_greedy_players(G: nx.Graph, fix: PlayerEpsilonGreedyFix, cut: PlayerEpsilonGreedyCut, fixEpsilon: float, cutEpsilon: float, fixAlpha: float, cutAlpha: float, fixGamma: float, cutGamma: float, episodes: int, printEvery: int = 0):
     GplayableStart, GUnsecuredSecuredStart, GSecuredStart = generate_playable_graphs(G)
@@ -145,36 +197,7 @@ def train_epsilon_greedy_players(G: nx.Graph, fix: PlayerEpsilonGreedyFix, cut: 
 # endregion
 
 
-def read_graph_from_file(path: str):
-    g = nx.read_adjlist(path)
-    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
-    return g
-
-
-def random_graph(n: int, p: float):
-    g = nx.generators.random_graphs.fast_gnp_random_graph(n, p)
-    s, t = random.sample(list(g.nodes), 2)
-    if (s, t) in g.edges:  # ensure the graph cannot be won immediately
-        g.remove_edge(s, t)
-    if not nx.has_path(g, s, t):  # ensure the graph is still winnable
-        return random_graph(n, p)
-    mapping = {node: str(node) for node in g.nodes}
-    mapping[s] = 's'
-    mapping[t] = 't'
-    nx.relabel_nodes(g, mapping, copy=False)
-    nx.write_adjlist(g, 'graphs/last_random_graph.adjlist')
-    nx.set_edge_attributes(g, EdgeState.UNSECURED, "state")
-    return g
-
-
-def generate_playable_graphs(G: nx.Graph):
-    gSecured = nx.Graph()
-    gSecured.add_nodes_from(G.nodes())
-    gUnsecuredSecured = gSecured.copy()
-    gUnsecuredSecured.add_edges_from(G.edges())
-    return G.copy(), gUnsecuredSecured, gSecured
-
-
+# region UI/input loop
 def display_graph(G: nx.Graph, pos: dict, stale: threading.Event):
     if stale.is_set():
         stale.clear()
@@ -182,19 +205,24 @@ def display_graph(G: nx.Graph, pos: dict, stale: threading.Event):
         nx.draw_networkx(G, pos=pos,
                          node_color=[('#8080FF' if n == 's' or n == 't' else '#808080') for n in G.nodes],
                          edge_color=[s[2].color for s in G.edges.data("state")])
-    plt.pause(0.01)
+    if not closed.is_set():
+        plt.pause(0.01)
 
 
-def start_game(G: nx.graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, fix: PlayerFix, cut: PlayerCut, stale: threading.Event):
+def start_game(G: nx.graph, GUnsecuredSecured: nx.Graph, GSecured: nx.Graph, fix: PlayerFix, cut: PlayerCut, stale: threading.Event, closed: threading.Event):
     while True:
         fix.take_turn(G, GUnsecuredSecured, GSecured)
         stale.set()
+        if closed.is_set():
+            break
         if fix.check_win(G, GUnsecuredSecured, GSecured):
             print(f"Player {fix.num} wins!")
             return fix.num
 
         cut.take_turn(G, GUnsecuredSecured, GSecured)
         stale.set()
+        if closed.is_set():
+            break
         if cut.check_win(G, GUnsecuredSecured, GSecured):
             print(f"Player {cut.num} wins!")
             return cut.num
@@ -205,23 +233,20 @@ def play_game(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
     pos = nx.spring_layout(Gplayable)
     stale = threading.Event()
     stale.set()
+    closed.clear()
     display_graph(Gplayable, pos, stale)
-    thread = threading.Thread(target=start_game, args=(Gplayable, GUnsecuredSecured, GSecured, fix, cut, stale))
+    thread = threading.Thread(target=start_game, args=(Gplayable, GUnsecuredSecured, GSecured, fix, cut, stale, closed))
     thread.start()
+    plt.gcf().canvas.mpl_connect('close_event', lambda _: closed.set())
     while thread.is_alive():
         display_graph(Gplayable, pos, stale)
     display_graph(Gplayable, pos, stale)
-    plt.show()
+    if not closed.is_set():
+        plt.show()
+# endregion
 
-def simple_demo():
-    epsilon_player_fix = PlayerEpsilonGreedyFix(1)
-    epsilon_player_cut = PlayerEpsilonGreedyCut(2)
-    graph = read_graph_from_file("graphs/graph.adjlist")
-    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.5, 0.5, 0.9, 0.9, 1_000, printEvery=100)
-    while True:
-        play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
-        play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
 
+# region Generate plots
 def play_game_no_display_return_winner(G: nx.Graph, fix: PlayerFix, cut: PlayerCut):
     Gplayable, GUnsecuredSecured, GSecured = generate_playable_graphs(G)
     while True:
@@ -231,6 +256,7 @@ def play_game_no_display_return_winner(G: nx.Graph, fix: PlayerFix, cut: PlayerC
         cut.take_turn(Gplayable, GUnsecuredSecured, GSecured, printModification= False)
         if cut.check_win(Gplayable, GUnsecuredSecured, GSecured):
             return cut.num
+
 
 def win_rate_fix_should_win_graph_plot():
     trials = 10
@@ -266,6 +292,7 @@ def win_rate_fix_should_win_graph_plot():
     plt.legend(loc="lower right")
     plt.show()
 
+
 def win_rate_cut_should_win_graph_plot():
     trials = 10
     rounds = 50
@@ -299,21 +326,68 @@ def win_rate_cut_should_win_graph_plot():
     plt.xlabel('Training Iterations')
     plt.legend(loc="lower right")
     plt.show()
+# endregion
 
-def main():
-    # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix(1), PlayerRandomCut(2))
-    # play_game(read_graph_from_file("graphs/graph.adjlist"), PlayerHumanFix(1), PlayerHumanCut(2))
-    # play_game(read_graph_from_file("graphs/complete_graph_10.adjlist"), PlayerRandomFix(1), PlayerHumanCut(2))
 
+def simple_demo():
     epsilon_player_fix = PlayerEpsilonGreedyFix(1)
     epsilon_player_cut = PlayerEpsilonGreedyCut(2)
-    # graph = read_graph_from_file("graphs/complete_graph_10.adjlist")
-    graph = random_graph(random.randint(8, 14), random.uniform(0.2, 0.4))
-    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
-                                 printEvery=1_000)
+    graph = read_graph_from_file("graphs/simple.adjlist")
+    train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.5, 0.5, 0.9, 0.9, 1_000, printEvery=100)
     while True:
         play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
         play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+
+
+def main():
+    filename = input('Please enter the name of a graph or hit Enter to play on a random graph: ').strip()
+    if filename:
+        graph = read_graph_from_file(f"graphs/{filename}.adjlist")
+    else:
+        graph = random_graph(random.randint(8, 14), random.uniform(0.2, 0.4))
+    epsilon_player_fix = epsilon_player_cut = None
+
+    while True:
+        print("Please select an option:\n- 1: AI vs. AI\n- 2: Human vs. AI\n- 3: Human vs. Human")
+        option = input('Enter a number: ').strip()
+        while option not in ('1', '2', '3'):
+            print('Not a valid option, please try again.')
+            option = input('Enter a number: ').strip()
+
+        if option == '1':
+            if not epsilon_player_fix or not epsilon_player_cut:
+                epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+                epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+                print('Training the AI...')
+                train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
+                                             printEvery=1_000)
+            play_game(graph, epsilon_player_fix, epsilon_player_cut)
+        elif option == '2':
+            print("Please select an option:\n- 1: You play as Player 1 (fix-type)\n- 2: You play as Player 2 (cut-type)")
+            option = input('Enter a number: ').strip()
+            while option not in ('1', '2'):
+                print('Not a valid option, please try again.')
+                option = input('Enter a number: ').strip()
+            if not epsilon_player_fix or not epsilon_player_cut:
+                epsilon_player_fix = PlayerEpsilonGreedyFix(1)
+                epsilon_player_cut = PlayerEpsilonGreedyCut(2)
+                print('Training the AI...')
+                train_epsilon_greedy_players(graph, epsilon_player_fix, epsilon_player_cut, 0.2, 0.2, 0.1, 0.1, 0.99, 0.99, 10_000,
+                                             printEvery=1_000)
+            if option == '1':
+                play_game(graph, PlayerHumanFix(1), epsilon_player_cut)
+            else:
+                play_game(graph, epsilon_player_fix, PlayerHumanCut(2))
+        elif option == '3':
+            play_game(graph, PlayerHumanFix(1), PlayerHumanCut(2))
+
+        option = input('Play again? (y/n) ').strip()
+        while option not in ('y', 'n'):
+            print('Not a valid option, please try again.')
+            option = input('Play again? (y/n) ').strip()
+        if option == 'n':
+            print('Thanks for playing!')
+            break
 
 
 if __name__ == "__main__":
